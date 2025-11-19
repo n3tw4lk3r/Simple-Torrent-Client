@@ -39,9 +39,9 @@ sudo pacman -S base-devel cmake openssl curl
 brew install cmake openssl curl
 ```
 
-## Building
+## Build
 ```bash
-git clone <repository-url>
+git clone https://github.com/n3tw4lk3r/Simple-Torrent-Client
 cd Simple-Torrent-Client
 mkdir build && cd build
 cmake -DCMAKE_EXPORT_COMPILE_COMMANDS=ON ..
@@ -74,7 +74,7 @@ make -j$(nproc)
 - No magnet link support
 
 ## Features To Implement:
-    Multi-file support: Extend PieceStorage and TorrentFile classes
-    DHT support: Implement DHT node and routing table
-    Seeding: Add upload capability to PeerConnect
+- Multi-file support: Extend PieceStorage and TorrentFile classes
+- DHT support: Implement DHT node and routing table
+- Seeding: Add upload capability to PeerConnect
 
