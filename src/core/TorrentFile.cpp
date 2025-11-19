@@ -1,5 +1,5 @@
-#include "torrent_file.h"
-#include "bencode.h"
+#include "core/TorrentFile.hpp"
+#include "utils/BencodeParser.hpp"
 #include <vector>
 #include <openssl/sha.h>
 #include <fstream>
@@ -9,9 +9,9 @@
 TorrentFile LoadTorrentFile(const std::string& filename) {
     std::cout << "Loading torrent file...\n";
     TorrentFile result;
-    
-    BencodeParser myParser;
-    auto res = myParser.parseFromFile(filename);
+
+    utils::BencodeParser myParser;
+    auto res = myParser.ParseFromFile(filename);
 
     for (int i = 0; i < res.size(); ++i) {
         if (res[i] == "announce") {
@@ -28,13 +28,12 @@ TorrentFile LoadTorrentFile(const std::string& filename) {
 
         if (res[i] == "piece length") {
             ++i;
-            result.pieceLength = stol(res[i]);
+            result.piece_length = stol(res[i]);
             continue;
         }
 
         if (res[i] == "length") {
             ++i;
-            // std::cout << res[i] << '\n';
             result.length = stol(res[i]);
             continue;
         }
@@ -46,7 +45,7 @@ TorrentFile LoadTorrentFile(const std::string& filename) {
         }
     }
 
-    result.infoHash = myParser.getHash();
-    result.pieceHashes = myParser.getPieceHashes();
+    result.info_hash = myParser.GetHash();
+    result.piece_hashes = myParser.GetPieceHashes();
     return result;
 }
