@@ -1,6 +1,6 @@
 ### Simple-Torrent-Client
 
-A lightweight C++ BitTorrent client implementation supporting downloads of single-file torrents with TCP trackers.
+A lightweight C++ BitTorrent client implementation supporting downloads of single-file torrents.
 
 ## Features
 - Single-file torrent downloads
