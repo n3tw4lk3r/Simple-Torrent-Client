@@ -3,10 +3,9 @@
 #include <iostream>
 #include <algorithm>
 
-PieceStorage::PieceStorage(const TorrentFile& torrent_file, const std::filesystem::path& output_directory,
-                          int piecesToDownloadCnt)
-    : default_piece_length(torrent_file.piece_length)
-    , number_of_pieces_to_download(piecesToDownloadCnt)
+PieceStorage::PieceStorage(const TorrentFile& torrent_file, const std::filesystem::path& output_directory)
+    : output_directory(output_directory)
+    , default_piece_length(torrent_file.piece_length)
     , torrent_file(torrent_file) {
 
     total_piece_count = torrent_file.piece_hashes.size();
@@ -15,34 +14,28 @@ PieceStorage::PieceStorage(const TorrentFile& torrent_file, const std::filesyste
     std::cout << "Total pieces: " << total_piece_count << std::endl;
     std::cout << "Piece length: " << torrent_file.piece_length << std::endl;
     std::cout << "Total length: " << torrent_file.length << std::endl;
-    std::cout << "Last piece size: " << (torrent_file.length % torrent_file.piece_length) << std::endl;
 
     for (size_t i = 0; i < total_piece_count; ++i) {
-        size_t pieceLength;
-        if (i == total_piece_count - 1) {
-            pieceLength = torrent_file.length % torrent_file.piece_length;
-            if (pieceLength == 0) {
-                pieceLength = torrent_file.piece_length;
-            }
-        } else {
-            pieceLength = torrent_file.piece_length;
-        }
-
-        if (pieceLength == 0) {
-            std::cerr << "ERROR: Piece " << i << " has zero length!" << std::endl;
-            pieceLength = torrent_file.piece_length;
-        }
+        size_t pieceLength = (i == total_piece_count - 1)
+            ? (torrent_file.length % torrent_file.piece_length ?: torrent_file.piece_length)
+            : torrent_file.piece_length;
 
         auto piece = std::make_shared<Piece>(i, pieceLength, torrent_file.piece_hashes[i]);
         remaining_pieces_queue.push(piece);
     }
 
+    InitializeOutputFile();
+    std::cout << "Initialized " << total_piece_count << " pieces in queue" << std::endl;
+}
+
+void PieceStorage::InitializeOutputFile() {
     std::string filename = (output_directory / torrent_file.name).generic_string();
     file.open(filename, std::ios::out | std::ios::binary | std::ios::trunc);
 
     if (!file.is_open()) {
         throw std::runtime_error("Failed to open output file: " + filename);
     }
+
 
     const size_t chunk_size = 100 * (1 << 20);
     for (size_t offset = 0; offset < torrent_file.length; offset += chunk_size) {
@@ -54,11 +47,14 @@ PieceStorage::PieceStorage(const TorrentFile& torrent_file, const std::filesyste
     file.flush();
 
     std::cout << "Created output file: " << filename << " (" << torrent_file.length << " bytes)" << std::endl;
-    std::cout << "Initialized " << total_piece_count << " pieces in storage" << std::endl;
+}
+
+size_t PieceStorage::GetMissingPiecesCount() const {
+    return GetMissingPieces().size();
 }
 
 bool PieceStorage::HasActiveWork() const {
-    return active_pieces_ > 0 || !QueueIsEmpty();
+    return !QueueIsEmpty();
 }
 
 PiecePtr PieceStorage::GetNextPieceToDownload() {
@@ -70,7 +66,6 @@ PiecePtr PieceStorage::GetNextPieceToDownload() {
 
     PiecePtr piece = remaining_pieces_queue.front();
     remaining_pieces_queue.pop();
-    ++active_pieces_;
     return piece;
 }
 
@@ -79,23 +74,16 @@ bool PieceStorage::IsPieceAlreadySaved(size_t piece_index) const {
     return std::find(indices_of_pieces_saved_to_disk.begin(),
                     indices_of_pieces_saved_to_disk.end(),
                     piece_index) != indices_of_pieces_saved_to_disk.end();
-
 }
+
 void PieceStorage::Enqueue(const PiecePtr& piece) {
     if (!piece) return;
 
-    std::lock_guard<std::mutex> lock(queue_mutex);
-    {
-        std::lock_guard<std::mutex> fileLock(file_mutex);
-        if (std::find(indices_of_pieces_saved_to_disk.begin(),
-                     indices_of_pieces_saved_to_disk.end(),
-                     piece->GetIndex()) != indices_of_pieces_saved_to_disk.end()) {
-            std::cout << "DEBUG: Piece " << piece->GetIndex()
-                      << " already saved, skipping requeue" << std::endl;
-            return;
-        }
+    if (IsPieceAlreadySaved(piece->GetIndex())) {
+        return;
     }
 
+    std::lock_guard<std::mutex> lock(queue_mutex);
     piece->Reset();
     remaining_pieces_queue.push(piece);
 }
@@ -110,19 +98,11 @@ void PieceStorage::PieceProcessed(const PiecePtr& piece) {
     }
 
     SavePieceToDisk(piece);
-    --active_pieces_;
 }
 
 bool PieceStorage::QueueIsEmpty() const {
     std::lock_guard<std::mutex> lock(queue_mutex);
     return remaining_pieces_queue.empty();
-}
-bool PieceStorage::HasActiveDownloads() const {
-    return false;
-}
-
-size_t PieceStorage::PiecesCompleteCount() const {
-    return PiecesSavedToDiscCount();
 }
 
 void PieceStorage::PrintDownloadStatus() const {
@@ -134,18 +114,16 @@ void PieceStorage::PrintDownloadStatus() const {
 }
 
 void PieceStorage::PrintDetailedStatus() const {
-
     std::cout << "=== DETAILED STATUS ===" << std::endl;
     std::cout << "Total pieces: " << total_piece_count << std::endl;
     std::cout << "Saved: " << PiecesSavedToDiscCount() << std::endl;
     std::cout << "In queue: " << remaining_pieces_queue.size() << std::endl;
 }
 
-
 void PieceStorage::PrintMissingPieces() const {
     auto missing = GetMissingPieces();
 
-    std::cout << "=== MISSING PIECES DIAGNOSTICS ===" << std::endl;
+    std::cout << "=== MISSING PIECES ===" << std::endl;
     std::cout << "Total pieces: " << total_piece_count << std::endl;
     std::cout << "Saved to disk: " << indices_of_pieces_saved_to_disk.size() << std::endl;
     std::cout << "In queue: " << remaining_pieces_queue.size() << std::endl;
@@ -164,13 +142,11 @@ void PieceStorage::PrintMissingPieces() const {
 }
 
 bool PieceStorage::IsDownloadComplete() const {
-    std::lock_guard<std::mutex> queueLock(queue_mutex);
     std::lock_guard<std::mutex> fileLock(file_mutex);
-
-    return (indices_of_pieces_saved_to_disk.size() == total_piece_count);
+    return indices_of_pieces_saved_to_disk.size() == total_piece_count;
 }
 
-void PieceStorage::ForceRequeueAllMissingPieces() {
+void PieceStorage::ForceRequeueMissingPieces() {
     std::lock_guard<std::mutex> lock(queue_mutex);
 
     while (!remaining_pieces_queue.empty()) {
@@ -178,36 +154,22 @@ void PieceStorage::ForceRequeueAllMissingPieces() {
     }
 
     auto missing = GetMissingPieces();
-
-    size_t requeued_count = 0;
     for (size_t piece_index : missing) {
-        size_t pieceLength;
-        if (piece_index == total_piece_count - 1) {
-            pieceLength = torrent_file.length % torrent_file.piece_length;
-            if (pieceLength == 0) {
-                pieceLength = torrent_file.piece_length;
-            }
-        } else {
-            pieceLength = torrent_file.piece_length;
-        }
+        size_t pieceLength = (piece_index == total_piece_count - 1)
+            ? (torrent_file.length % torrent_file.piece_length ?: torrent_file.piece_length)
+            : torrent_file.piece_length;
 
         auto piece = std::make_shared<Piece>(piece_index, pieceLength, torrent_file.piece_hashes[piece_index]);
         remaining_pieces_queue.push(piece);
-        requeued_count++;
-
-        std::cout << "FORCE REQUEUE: Added piece " << piece_index << " to queue" << std::endl;
     }
 
-    std::cout << "FORCE REQUEUE: Added " << requeued_count << " pieces to queue" << std::endl;
-    std::cout << "Queue size after requeue: " << remaining_pieces_queue.size() << std::endl;
+    std::cout << "Requeued " << missing.size() << " missing pieces" << std::endl;
 }
 
 std::vector<size_t> PieceStorage::GetMissingPieces() const {
-    std::lock_guard<std::mutex> queueLock(queue_mutex);
     std::lock_guard<std::mutex> fileLock(file_mutex);
 
     std::vector<bool> pieceStatus(total_piece_count, false);
-
     for (size_t savedIndex : indices_of_pieces_saved_to_disk) {
         if (savedIndex < total_piece_count) {
             pieceStatus[savedIndex] = true;
@@ -224,10 +186,6 @@ std::vector<size_t> PieceStorage::GetMissingPieces() const {
     return missingPieces;
 }
 
-void PieceStorage::ForceRequeueMissingPieces() {
-    ForceRequeueAllMissingPieces();
-}
-
 size_t PieceStorage::PiecesSavedToDiscCount() const {
     std::lock_guard<std::mutex> lock(file_mutex);
     return indices_of_pieces_saved_to_disk.size();
@@ -237,6 +195,12 @@ void PieceStorage::SavePieceToDisk(const PiecePtr& piece) {
     if (!piece) return;
 
     std::lock_guard<std::mutex> lock(file_mutex);
+
+    if (std::find(indices_of_pieces_saved_to_disk.begin(),
+                 indices_of_pieces_saved_to_disk.end(),
+                 piece->GetIndex()) != indices_of_pieces_saved_to_disk.end()) {
+        return;
+    }
 
     try {
         size_t file_offset = piece->GetIndex() * default_piece_length;
@@ -253,15 +217,9 @@ void PieceStorage::SavePieceToDisk(const PiecePtr& piece) {
         file.write(piece_data.data(), piece_data.size());
         file.flush();
 
-        if (std::find(indices_of_pieces_saved_to_disk.begin(),
-                     indices_of_pieces_saved_to_disk.end(),
-                     piece->GetIndex()) == indices_of_pieces_saved_to_disk.end()) {
-            indices_of_pieces_saved_to_disk.push_back(piece->GetIndex());
-            std::cout << "Saved piece " << piece->GetIndex() << " to disk ("
-                      << piece_data.size() << " bytes)" << std::endl;
-        } else {
-            std::cout << "WARNING: Piece " << piece->GetIndex() << " already saved!" << std::endl;
-        }
+        indices_of_pieces_saved_to_disk.push_back(piece->GetIndex());
+        std::cout << "Saved piece " << piece->GetIndex() << " to disk ("
+                  << piece_data.size() << " bytes)" << std::endl;
 
     } catch (const std::exception& e) {
         std::cerr << "Failed to save piece " << piece->GetIndex() << " to disk: "
@@ -281,8 +239,4 @@ void PieceStorage::CloseOutputFile() {
         file.close();
         std::cout << "Output file closed" << std::endl;
     }
-}
-
-size_t PieceStorage::getToDownloadCnt() const {
-    return number_of_pieces_to_download;
 }

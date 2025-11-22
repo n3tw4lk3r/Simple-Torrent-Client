@@ -29,11 +29,11 @@ size_t PeerPiecesAvailability::Size() const {
 
 PeerConnect::PeerConnect(const Peer& peer, const TorrentFile &torrent_file,
                          std::string self_peer_id, PieceStorage& piece_storage)
-    : socket(peer.ip, peer.port, 7500ms, 7500ms)
-    , torrent_file(torrent_file)
+    : torrent_file(torrent_file)
+    , socket(peer.ip, peer.port, 3500ms, 3500ms)
     , self_peer_id(std::move(self_peer_id))
-    , piece_storage(piece_storage)
-    , pieces_availability("", 0) {}
+    , pieces_availability("", 0)
+    , piece_storage(piece_storage) {}
 
     void PeerConnect::Run() {
         int total_failures = 0;
@@ -276,7 +276,14 @@ PiecePtr PeerConnect::GetNextAvailablePiece() {
             continue;
         }
 
-        if (pieces_availability.IsPieceAvailable(piece->GetIndex())) {
+        size_t missing_count = piece_storage.GetMissingPieces().size();
+        bool endgame_mode = missing_count <= 10;
+
+        if (pieces_availability.IsPieceAvailable(piece->GetIndex()) || endgame_mode) {
+            if (endgame_mode && !pieces_availability.IsPieceAvailable(piece->GetIndex())) {
+                std::cout << "ENDGAME: Trying piece " << piece->GetIndex()
+                          << " even though peer doesn't have it in bitfield" << std::endl;
+            }
             return piece;
         }
 

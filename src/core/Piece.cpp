@@ -21,8 +21,15 @@ bool Piece::HashMatches() const {
 
     std::string piece_data = GetData();
     std::string calculated_hash = utils::CalculateSHA1(piece_data);
+    bool matches = (calculated_hash == hash);
 
-    return calculated_hash == hash;
+    if (!matches) {
+        std::cout << "Hash mismatch for piece " << index
+                  << " (expected: " << utils::BytesToHex(hash)
+                  << ", got: " << utils::BytesToHex(calculated_hash) << ")" << std::endl;
+    }
+
+    return matches;
 }
 
 Block* Piece::GetFirstMissingBlock() {
@@ -42,9 +49,14 @@ size_t Piece::GetIndex() const {
 void Piece::SaveBlock(size_t blockOffset, std::string block_data) {
     for (auto& block : blocks) {
         if (block.offset == blockOffset) {
+            if (block.status != Block::kPending) {
+                throw std::runtime_error("Block at offset " + std::to_string(blockOffset) +
+                                       " is not in pending state");
+            }
+
             block.data = std::move(block_data);
             block.status = Block::kRetrieved;
-            bytes_downloaded += block_data.size();
+            bytes_downloaded += block.data.size();
             return;
         }
     }
@@ -52,16 +64,9 @@ void Piece::SaveBlock(size_t blockOffset, std::string block_data) {
 }
 
 bool Piece::AllBlocksRetrieved() const {
-    if (!this) {
-        std::cerr << "ERROR: AllBlocksRetrieved called on null pointer!" << std::endl;
-        return false;
-    }
-
-    bool all_retrieved = std::all_of(blocks.begin(), blocks.end(), [](const Block& block) {
+    return std::all_of(blocks.begin(), blocks.end(), [](const Block& block) {
         return block.status == Block::kRetrieved;
     });
-
-    return all_retrieved;
 }
 
 std::string Piece::GetData() const {
@@ -70,6 +75,11 @@ std::string Piece::GetData() const {
 
     for (const auto& block : blocks) {
         if (block.status == Block::kRetrieved) {
+            if (block.data.size() != block.length) {
+                std::cerr << "WARNING: Block at offset " << block.offset
+                          << " has incorrect size: " << block.data.size()
+                          << " != " << block.length << std::endl;
+            }
             result += block.data;
         } else {
             result.append(block.length, '\0');
@@ -88,20 +98,17 @@ const std::string& Piece::GetHash() const {
 }
 
 void Piece::Reset() {
+    bytes_downloaded = 0;
     for (auto& block : blocks) {
         block.status = Block::kMissing;
         block.data.clear();
     }
-    bytes_downloaded = 0;
 }
 
 bool Piece::IsDownloading() const {
-    for (const auto& block : blocks) {
-        if (block.status == Block::kPending) {
-            return true;
-        }
-    }
-    return false;
+    return std::any_of(blocks.begin(), blocks.end(), [](const Block& block) {
+        return block.status == Block::kPending;
+    });
 }
 
 bool Piece::IsComplete() const {
