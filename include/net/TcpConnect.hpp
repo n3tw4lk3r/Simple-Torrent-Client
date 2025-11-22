@@ -12,6 +12,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/poll.h>
+#include <atomic>
 
 class TcpConnect {
 public:
@@ -22,6 +23,7 @@ public:
     void SendData(const std::string& data) const;
     std::string ReceiveData(size_t bufferSize = 0) const;
     void CloseConnection();
+    void ForceClose();
     const std::string& GetIp() const;
     int GetPort() const;
 
@@ -30,5 +32,6 @@ private:
     const int port;
     std::chrono::milliseconds connect_timeout;
     std::chrono::milliseconds read_timeout;
-    int sock;
+    mutable std::atomic<bool> force_close_{false};
+    mutable int sock;
 };

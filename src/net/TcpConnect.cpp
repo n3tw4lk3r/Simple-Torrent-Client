@@ -1,24 +1,52 @@
 #include "net/TcpConnect.hpp"
 #include "utils/byte_tools.hpp"
+#include <cstdio>
 
-TcpConnect::TcpConnect(std::string ip, int port, std::chrono::milliseconds connect_timeout, std::chrono::milliseconds read_timeout) :
-    ip(ip),
-    port(port),
-    connect_timeout(connect_timeout),
-    read_timeout(read_timeout)
-    {
-        sock = socket(AF_INET, SOCK_STREAM, 0);
-    }
+TcpConnect::TcpConnect(std::string ip, int port,
+                       std::chrono::milliseconds connect_timeout,
+                       std::chrono::milliseconds read_timeout)
+    : ip(ip), port(port),
+      connect_timeout(connect_timeout),
+      read_timeout(read_timeout),
+      force_close_(false) {
+    sock = socket(AF_INET, SOCK_STREAM, 0);
+}
 
 TcpConnect::~TcpConnect() {
     close(sock);
 }
 
+void TcpConnect::CloseConnection() {
+    force_close_ = true;
+    if (sock != -1) {
+        close(sock);
+        sock = -1;
+    }
+}
+
+void TcpConnect::ForceClose() {
+    force_close_ = true;
+    if (sock != -1) {
+        close(sock);
+    }
+}
+
 void TcpConnect::EstablishConnection() {
-    struct sockaddr_in server;
-    server.sin_addr.s_addr = inet_addr(ip.c_str());
-    server.sin_family = AF_INET;
-    server.sin_port = htons(port);
+    if (sock != -1) {
+            close(sock);
+        }
+
+        sock = socket(AF_INET, SOCK_STREAM, 0);
+        if (sock == -1) {
+            throw std::runtime_error("Failed to create socket: " + std::string(strerror(errno)));
+        }
+
+        force_close_ = false;
+
+        struct sockaddr_in server;
+        server.sin_addr.s_addr = inet_addr(ip.c_str());
+        server.sin_family = AF_INET;
+        server.sin_port = htons(port);
 
     fd_set fdset;
     struct timeval time_val;
@@ -62,8 +90,8 @@ void TcpConnect::EstablishConnection() {
 }
 
 void TcpConnect::SendData(const std::string& data) const {
-    char to_send[data.size()];
-    for (int i = 0; i < data.size(); ++i) {
+    char to_send[BUFSIZ];
+    for (size_t i = 0; i < data.size(); ++i) {
         to_send[i] = data[i];
     }
 
@@ -122,10 +150,6 @@ std::string TcpConnect::ReceiveData(size_t buffer_size) const {
     }
 
     return message;
-}
-
-void TcpConnect::CloseConnection() {
-    close(sock);
 }
 
 const std::string &TcpConnect::GetIp() const {

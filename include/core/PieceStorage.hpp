@@ -19,7 +19,7 @@ public:
     void PieceProcessed(const PiecePtr& piece);
     void Enqueue(const PiecePtr& piece);
     bool QueueIsEmpty() const;
-
+    bool IsPieceAlreadySaved(size_t piece_index) const;
     size_t TotalPiecesCount() const;
     size_t PiecesSavedToDiscCount() const;
     size_t getToDownloadCnt() const;
@@ -30,11 +30,6 @@ public:
     bool HasActiveWork() const;
     std::vector<size_t> GetMissingPieces() const;
     void ForceRequeueMissingPieces();
-
-    bool HasActivePieces() const {
-        return active_pieces_ > 0 || !QueueIsEmpty();
-    }
-
 
     bool HasActiveDownloads() const;
     size_t PiecesCompleteCount() const;

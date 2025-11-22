@@ -56,6 +56,7 @@ PieceStorage::PieceStorage(const TorrentFile& torrent_file, const std::filesyste
     std::cout << "Created output file: " << filename << " (" << torrent_file.length << " bytes)" << std::endl;
     std::cout << "Initialized " << total_piece_count << " pieces in storage" << std::endl;
 }
+
 bool PieceStorage::HasActiveWork() const {
     return active_pieces_ > 0 || !QueueIsEmpty();
 }
@@ -73,13 +74,30 @@ PiecePtr PieceStorage::GetNextPieceToDownload() {
     return piece;
 }
 
+bool PieceStorage::IsPieceAlreadySaved(size_t piece_index) const {
+    std::lock_guard<std::mutex> lock(file_mutex);
+    return std::find(indices_of_pieces_saved_to_disk.begin(),
+                    indices_of_pieces_saved_to_disk.end(),
+                    piece_index) != indices_of_pieces_saved_to_disk.end();
+
+}
 void PieceStorage::Enqueue(const PiecePtr& piece) {
     if (!piece) return;
 
     std::lock_guard<std::mutex> lock(queue_mutex);
+    {
+        std::lock_guard<std::mutex> fileLock(file_mutex);
+        if (std::find(indices_of_pieces_saved_to_disk.begin(),
+                     indices_of_pieces_saved_to_disk.end(),
+                     piece->GetIndex()) != indices_of_pieces_saved_to_disk.end()) {
+            std::cout << "DEBUG: Piece " << piece->GetIndex()
+                      << " already saved, skipping requeue" << std::endl;
+            return;
+        }
+    }
+
     piece->Reset();
     remaining_pieces_queue.push(piece);
-    --active_pieces_;
 }
 
 void PieceStorage::PieceProcessed(const PiecePtr& piece) {

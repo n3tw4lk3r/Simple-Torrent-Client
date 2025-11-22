@@ -35,39 +35,72 @@ PeerConnect::PeerConnect(const Peer& peer, const TorrentFile &torrent_file,
     , piece_storage(piece_storage)
     , pieces_availability("", 0) {}
 
-void PeerConnect::Run() {
-    while (!is_terminated) {
-        try {
-            if (EstablishConnection()) {
-                MainLoop();
-            } else {
-                has_failed = true;
-                break;
+    void PeerConnect::Run() {
+        int total_failures = 0;
+        const int max_total_failures = 20;
+
+        while (!is_terminated && total_failures < max_total_failures) {
+            try {
+                try {
+                    socket.CloseConnection();
+                } catch (...) {
+                }
+
+                if (total_failures > 0) {
+                    int backoff = std::min(10, total_failures);
+                    std::this_thread::sleep_for(std::chrono::seconds(backoff));
+                }
+
+                if (EstablishConnection()) {
+                    total_failures = 0;
+                    MainLoop();
+                } else {
+                    total_failures++;
+                }
+            } catch (const std::exception& e) {
+                total_failures++;
+                std::cerr << "Peer " << socket.GetIp() << ":" << socket.GetPort()
+                          << " error: " << e.what()
+                          << " (total failures: " << total_failures << ")" << std::endl;
+                HandleConnectionError();
             }
-        } catch (const std::exception& e) {
-            std::cerr << "Peer " << socket.GetIp() << ":" << socket.GetPort()
-                      << " error: " << e.what() << std::endl;
-            HandleConnectionError();
         }
 
-        if (!is_terminated && has_failed) {
-            Terminate();
+        if (total_failures >= max_total_failures) {
+            std::cout << "Permanently giving up on peer " << socket.GetIp()
+                      << " after " << total_failures << " failures" << std::endl;
+            has_failed = true;
         }
+
+        Terminate();
     }
+
+bool PeerConnect::IsTerminated() const {
+    return is_terminated;
 }
 
 void PeerConnect::HandleConnectionError() {
     has_failed = true;
 
     if (piece_is_in_progress && !piece_is_in_progress->AllBlocksRetrieved()) {
-        std::cout << "DEBUG: Returning piece " << piece_is_in_progress->GetIndex()
-                  << " to queue due to connection error" << std::endl;
-        piece_is_in_progress->Reset();
-        piece_storage.Enqueue(piece_is_in_progress);
-        piece_is_in_progress.reset();
-    }
+            if (!piece_storage.IsPieceAlreadySaved(piece_is_in_progress->GetIndex())) {
+                std::cout << "DEBUG: Returning piece " << piece_is_in_progress->GetIndex()
+                          << " to queue due to connection error" << std::endl;
+                piece_is_in_progress->Reset();
+                piece_storage.Enqueue(piece_is_in_progress);
+            } else {
+                std::cout << "DEBUG: Piece " << piece_is_in_progress->GetIndex()
+                          << " already saved, not returning to queue" << std::endl;
+            }
+            piece_is_in_progress.reset();
+        }
 
     block_is_pending = false;
+
+    try {
+        socket.CloseConnection();
+    } catch (...) {
+    }
 
     if (!is_terminated) {
         std::this_thread::sleep_for(2s);
@@ -111,6 +144,10 @@ bool PeerConnect::EstablishConnection() {
     } catch (const std::exception& e) {
         std::cerr << "Failed to establish connection with " << socket.GetIp()
                   << ":" << socket.GetPort() << " - " << e.what() << std::endl;
+        try {
+            socket.CloseConnection();
+        } catch (...) {
+        }
         return false;
     }
 }
@@ -285,28 +322,6 @@ void PeerConnect::ProcessMessage(const std::string& message_data) {
                 size_t block_offset = utils::BytesToInt(message.payload.substr(4, 4));
                 std::string block_data = message.payload.substr(8);
 
-if (piece_index == 1197) {
-            std::cout << "=== DEBUG: Received block for piece 1197 ===" << std::endl;
-            std::cout << "Block offset: " << block_offset << std::endl;
-            std::cout << "Block data size: " << block_data.size() << std::endl;
-
-            if (block_data.size() >= 16) {
-                std::cout << "First 8 bytes of block: " << utils::BytesToHex(block_data.substr(0, 8)) << std::endl;
-                std::cout << "Last 8 bytes of block: " << utils::BytesToHex(block_data.substr(block_data.size() - 8)) << std::endl;
-            }
-
-            bool all_zeros = true;
-            for (char c : block_data) {
-                if (c != 0) {
-                    all_zeros = false;
-                    break;
-                }
-            }
-            if (all_zeros) {
-                std::cout << "WARNING: Block for piece 1197 contains only zeros!" << std::endl;
-            }
-        }
-
                 if (piece_is_in_progress && piece_is_in_progress->GetIndex() == piece_index) {
                     piece_is_in_progress->SaveBlock(block_offset, block_data);
                     block_is_pending = false;
@@ -325,11 +340,7 @@ if (piece_index == 1197) {
                             piece_storage.Enqueue(piece_is_in_progress);
                             piece_is_in_progress.reset();
                         }
-                    } else if (piece_index == 1197) {
-                        std::cout << "DEBUG: Piece 1197 progress - blocks remaining" << std::endl;
                     }
-                } else if (piece_index == 1197) {
-                    std::cout << "WARNING: Received block for piece 1197 but no piece in progress!" << std::endl;
                 }
             }
             break;

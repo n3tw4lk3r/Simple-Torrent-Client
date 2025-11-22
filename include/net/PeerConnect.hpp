@@ -4,13 +4,8 @@
 #include "net/Peer.hpp"
 #include "core/TorrentFile.hpp"
 #include "core/PieceStorage.hpp"
-#include <iostream>
-#include <sstream>
-#include <utility>
-#include <cmath>
 #include <atomic>
 #include <string>
-#include <vector>
 
 class PeerPiecesAvailability {
 public:
@@ -34,7 +29,8 @@ public:
     void Run();
     void Terminate();
     bool Failed() const;
-
+    bool IsDownloading() const;
+    bool IsTerminated() const;
 private:
     const TorrentFile& torrent_file;
     TcpConnect socket;

@@ -5,7 +5,6 @@
 #include <random>
 #include <thread>
 #include <algorithm>
-#include <set>
 
 using namespace std::chrono_literals;
 
@@ -50,24 +49,19 @@ bool TorrentClient::RunDownloadMultithread(PieceStorage& pieces,
     peer_threads.reserve(peer_connections.size());
     for (auto& peer_connect_ptr : peer_connections) {
         peer_threads.emplace_back([peer_connect_ptr]() {
-            int attempts = 0;
-            static constexpr int max_number_of_attempts = 5;
-            bool should_try_again = true;
-
-            while (should_try_again && attempts < max_number_of_attempts) {
+            while (!peer_connect_ptr->IsTerminated()) {
                 try {
-                    ++attempts;
                     peer_connect_ptr->Run();
-                    should_try_again = false; // Success
                 } catch (const std::exception& e) {
-                    std::cerr << "Connection attempt " << attempts << " failed: "
-                              << e.what() << std::endl;
-                    should_try_again = peer_connect_ptr->Failed() && attempts < max_number_of_attempts;
-                    if (should_try_again) {
-                        std::this_thread::sleep_for(2s * attempts);
+                    std::cerr << "Peer " << " error: "
+                              << e.what() << " - reconnecting..." << std::endl;
+
+                    if (!peer_connect_ptr->IsTerminated()) {
+                        std::this_thread::sleep_for(5s);
                     }
                 }
             }
+            std::cout << "Peer thread for " << " terminated" << std::endl;
         });
     }
 
@@ -112,11 +106,7 @@ bool TorrentClient::RunDownloadMultithread(PieceStorage& pieces,
     for (auto& thread : peer_threads) {
         if (thread.joinable()) {
             thread.join();
-        }
-    }
-
-    for (auto& thread : peer_threads) {
-        if (thread.joinable()) {
+        } else {
             thread.detach();
         }
     }
@@ -135,7 +125,6 @@ bool TorrentClient::RunDownloadMultithread(PieceStorage& pieces,
 
     return !download_complete;
 }
-
 void TorrentClient::DownloadFromTracker(const TorrentFile& torrent_file, PieceStorage& pieces) {
     std::vector<std::string> trackers = {
         torrent_file.announce,
